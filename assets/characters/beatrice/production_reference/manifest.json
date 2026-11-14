@@ -1,0 +1,23 @@
+{
+  "production": true,
+  "source": "assets/generated/beatrice_reference/beatrice_poses_v2.png",
+  "poses": [
+    "idle",
+    "reading",
+    "thinking",
+    "explaining",
+    "talking",
+    "happy",
+    "surprised",
+    "tea",
+    "working",
+    "signature",
+    "stretch",
+    "sleepy"
+  ],
+  "size": [
+    384,
+    448
+  ],
+  "method": "new AGY image-generator illustration; chroma key and animation-frame preparation"
+}

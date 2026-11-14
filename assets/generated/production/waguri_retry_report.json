@@ -1,0 +1,38 @@
+{
+  "character": "Waguri Kaoruko",
+  "status": "success",
+  "subagent_conversation_id": "781d22a9-096d-4dc8-848a-0852753a6759",
+  "source_generated_file": "C:\\Users\\hp\\.gemini\\antigravity-cli\\brain\\3c377582-1032-4403-b1d0-953c716a3196\\waguri_kaoruko_spritesheet_v3_1794557530508.jpg",
+  "target_image_path": "C:\\Users\\hp\\frieren-desk\\assets\\generated\\production\\waguri_poses.png",
+  "format": "PNG",
+  "width": 896,
+  "height": 1200,
+  "file_size_bytes": 1815380,
+  "grid": {
+    "columns": 3,
+    "rows": 4,
+    "total_cells": 12,
+    "cell_width": 298.66,
+    "cell_height": 300.0,
+    "backdrop_color": "#ff00ff"
+  },
+  "poses": [
+    "Row 1 Col 1: idle",
+    "Row 1 Col 2: reading",
+    "Row 1 Col 3: thinking hand-to-chin",
+    "Row 2 Col 1: explaining open palm",
+    "Row 2 Col 2: talking (same body as idle)",
+    "Row 2 Col 3: happy wave",
+    "Row 3 Col 1: surprised",
+    "Row 3 Col 2: holding tea",
+    "Row 3 Col 3: working with notebook/laptop",
+    "Row 4 Col 1: gentle confident gesture",
+    "Row 4 Col 2: stretching",
+    "Row 4 Col 3: sleepy"
+  ],
+  "verification": {
+    "dimensions_valid": true,
+    "min_dimensions_met": true,
+    "target_exists": true
+  }
+}

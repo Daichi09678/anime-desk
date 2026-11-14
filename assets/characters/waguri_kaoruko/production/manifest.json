@@ -1,0 +1,23 @@
+{
+  "production": true,
+  "source": "assets/generated/production/waguri_poses.png",
+  "poses": [
+    "idle",
+    "reading",
+    "thinking",
+    "explaining",
+    "talking",
+    "happy",
+    "surprised",
+    "tea",
+    "working",
+    "signature",
+    "stretch",
+    "sleepy"
+  ],
+  "size": [
+    384,
+    448
+  ],
+  "method": "new AGY image-generator illustration; chroma key and animation-frame preparation"
+}

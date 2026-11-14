@@ -1,0 +1,18 @@
+{
+  "name": "Waguri Kaoruko",
+  "source": "assets/sprites/references/waguri/image.png",
+  "size": [
+    384,
+    448
+  ],
+  "expressions": [
+    "neutral",
+    "happy",
+    "talking",
+    "thinking",
+    "surprised",
+    "sleepy"
+  ],
+  "method": "reference-based portrait crop and local facial edits",
+  "notes": "Initial 2D portrait assets; body/face anchors are identical across expressions. No new full-body poses are implied."
+}
