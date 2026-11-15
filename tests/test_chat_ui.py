@@ -196,6 +196,83 @@ class ChatUITests(unittest.TestCase):
         self.window._on_narration_failed(self.window._tts_token, "Sample tidak valid")
         self.assertIn("Sample tidak valid", self.window.chat_panel.status.text())
 
+    def test_chat_is_immediate_while_character_subtitle_waits_for_audio(self):
+        window = self.window
+        window.config["ui"].update(voice_enabled=True, voice_mode="narration")
+        answer = "Hasil perhitungan adalah 42."
+        result = CodexResult(answer, "", [], narration_ja="計算結果は四十二だ。")
+        with patch("main.NarrationWorker"):
+            window._on_stream_text(answer)
+            self.assertNotIn(answer, window.bubble.text_label.text())
+            self.assertIn(answer, window.chat_panel.transcript.toPlainText())
+            window.backend.append_memory("assistant", answer)
+            window._on_codex_result(result)
+            self.assertNotIn(answer, window.bubble.text_label.text())
+            self.assertIn(answer, window.chat_panel.transcript.toPlainText())
+            window._on_voice_speaking(True)
+            self.assertIn(answer, window.bubble.text_label.text())
+            self.assertIn(answer, window.chat_panel.transcript.toPlainText())
+            self.assertFalse(window.bubble.typing_timer.isActive())
+            self.assertIsNone(window._synced_subtitle)
+            window._tts_workers.clear()
+
+    def test_subtitle_is_not_lost_when_voice_fails_or_is_stopped(self):
+        window = self.window
+        window.config["ui"].update(voice_enabled=True, voice_mode="narration")
+        with patch("main.NarrationWorker"):
+            for action in (lambda:window._on_narration_failed(window._tts_token, "gagal"), window.stop_all_voice):
+                window._on_codex_result(CodexResult("Jawaban tetap tersedia.", "", [], narration_ja="答えだよ。"))
+                action()
+                self.assertIn("Jawaban tetap tersedia.", window.bubble.text_label.text())
+                self.assertIsNone(window._synced_subtitle)
+            window._tts_workers.clear()
+
+    def test_stream_prefetch_is_reused_and_playback_waits_for_subtitle(self):
+        window = self.window
+        window.config["ui"].update(voice_enabled=True, voice_mode="narration", tts_engine="qwen-local")
+        with patch("main.NarrationWorker") as factory, patch.object(window.voice, "play") as play:
+            window._on_stream_text("[VOICE_JA]計算結果は四十二だ。[/VOICE_JA]")
+            window._on_narration_ready(window._tts_token, NarrationAudio(self.root / "reply.wav", 1000, "qwen-local"))
+            play.assert_not_called()
+            window._on_codex_result(CodexResult("Hasilnya 42.", "", [], narration_ja="計算結果は四十二だ。"))
+            self.assertEqual(factory.call_count, 1)
+            play.assert_called_once()
+            window._tts_workers.clear()
+
+    def test_stop_during_prefetch_does_not_restart_on_next_stream_update(self):
+        window = self.window
+        window.config["ui"].update(voice_enabled=True, voice_mode="narration", tts_engine="qwen-local")
+        with patch("main.NarrationWorker") as factory:
+            text = "[VOICE_JA]計算結果は四十二だ。[/VOICE_JA]"
+            window._on_stream_text(text)
+            window._stop_voice_requested()
+            window._on_stream_text(text + "Hasilnya 42.")
+            window._on_codex_result(CodexResult("Hasilnya 42.", "", [], narration_ja="計算結果は四十二だ。"))
+            self.assertEqual(factory.call_count, 1)
+            window._tts_workers.clear()
+
+    def test_narration_chunks_wait_for_playback_and_stop_clears_queue(self):
+        window = self.window
+        token = window._tts_token
+        first = NarrationAudio(self.root / "first.wav", 1000, "edge")
+        second = NarrationAudio(self.root / "second.wav", 1000, "edge")
+        def play(clip):
+            window._on_voice_speaking(True)
+            return True
+        with patch.object(window.voice, "play", side_effect=play) as playback:
+            window._on_narration_ready(token, first)
+            window._on_narration_ready(token, second)
+            self.assertEqual(playback.call_count, 1)
+            window._on_voice_speaking(False)
+            self.app.processEvents()
+            self.assertEqual(playback.call_count, 2)
+            self.assertEqual(playback.call_args.args[0].file, second.file)
+            window._on_narration_ready(token, first)
+            window.stop_all_voice()
+            self.assertEqual(window._tts_queue, [])
+            window._on_narration_ready(token, second)
+            self.assertEqual(playback.call_count, 2)
+
     def test_missing_dub_never_reads_indonesian_with_japanese_voice(self):
         self.window.config["ui"].update(voice_enabled=True,voice_mode="narration")
         with patch("main.NarrationWorker") as factory:

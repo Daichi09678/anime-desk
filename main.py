@@ -84,7 +84,8 @@ from character_profiles import PROFILES, EXPRESSION_LABELS, EXPRESSION_STATES, g
 from character_theme import theme_styles
 from character_voice import VoiceBank, VoiceController, VoiceDialog
 from character_voice import VoiceClip
-from speech_synthesis import NarrationWorker
+from speech_synthesis import NarrationWorker, narration_text
+from clone_service import clone_service
 from scene_theme import SceneSurface, SceneMenu
 from character_widget import FrierenSpriteWidget
 from needs_manager import NeedsManager
@@ -1257,6 +1258,13 @@ class FrierenDeskWindow(QWidget):
         self._tts_workers = []
         self._tts_token = 0
         self._tts_pending = False
+        self._tts_queue = []
+        self._tts_generating = False
+        self._synced_subtitle = None
+        self._prefetched_narration = ""
+        self._waiting_voice_result = False
+        self._prefetch_error = ""
+        self._voice_suppressed = False
         self._tts_started = 0.0
         self._tts_clock = QTimer(self)
         self._tts_clock.setInterval(1000)
@@ -1364,7 +1372,7 @@ class FrierenDeskWindow(QWidget):
         self.chat_panel.characterSelected.connect(self._set_character)
         self.chat_panel.timeoutSelected.connect(self._set_timeout)
         self.chat_panel.voiceRequested.connect(self.open_voice_settings)
-        self.chat_panel.stopVoiceRequested.connect(self.stop_all_voice)
+        self.chat_panel.stopVoiceRequested.connect(self._stop_voice_requested)
         self.chat_panel.expressionSelected.connect(self._preview_expression)
         self.chat_panel.panelResized.connect(self._save_panel_size)
         self.chat_panel.sendRequested.connect(self.send_message)
@@ -1441,9 +1449,9 @@ class FrierenDeskWindow(QWidget):
         bank = VoiceBank(self.base_dir, self.profile.id)
         prefs = self.config.get("ui",{})
         dialog = VoiceDialog(bank,self.voice,self.profile,prefs.get("voice_enabled",True),self.chat_panel,
-                             mode=prefs.get("voice_mode","narration"),engine=prefs.get("tts_engine","auto"))
+                             mode=prefs.get("voice_mode","narration"),engine=prefs.get("tts_engine","qwen-local"))
         dialog.narrationPreview.connect(lambda:self._start_narration(self.profile.voice_preview,"hangat",True,dialog.engine.currentData()))
-        dialog.stopRequested.connect(self.stop_all_voice)
+        dialog.stopRequested.connect(self._stop_voice_requested)
         dialog.finished.connect(self.stop_all_voice)
         dialog.exec()
         self.config.setdefault("ui",{})["voice_enabled"] = dialog.enabled.isChecked()
@@ -1461,7 +1469,17 @@ class FrierenDeskWindow(QWidget):
         if clip:
             self.voice.play(clip)
 
+    def _stop_voice_requested(self):
+        self._voice_suppressed = True
+        self.stop_all_voice()
+
     def stop_all_voice(self) -> None:
+        self._release_synced_subtitle()
+        self._prefetched_narration = ""
+        self._waiting_voice_result = False
+        self._prefetch_error = ""
+        self._tts_queue.clear()
+        self._tts_generating = False
         self._tts_clock.stop()
         self._tts_token += 1
         self._tts_pending = False
@@ -1477,19 +1495,50 @@ class FrierenDeskWindow(QWidget):
         self.stop_all_voice()
         token = self._tts_token
         self._tts_pending = True
+        self._tts_generating = True
         self._tts_started = time.monotonic()
         self._tts_clock.start()
         self.chat_panel.stop_voice_btn.show()
         self._tick_narration_clock()
         logging.info("Narration started: character=%s engine=%s chars=%s token=%s", self.profile.id,
-                     engine or self.config.get("ui",{}).get("tts_engine","auto"), len(text), token)
+                     engine or self.config.get("ui",{}).get("tts_engine","qwen-local"), len(text), token)
         worker = NarrationWorker(self.base_dir,self.profile.id,text,emotion,
-                                 engine or self.config.get("ui",{}).get("tts_engine","auto"),self)
+                                 engine or self.config.get("ui",{}).get("tts_engine","qwen-local"),self)
         self._tts_workers.append(worker)
         worker.ready.connect(lambda audio,t=token:self._on_narration_ready(t,audio))
         worker.failed.connect(lambda message,t=token:self._on_narration_failed(t,message))
         worker.finished.connect(self._on_narration_finished)
+        worker.finished.connect(lambda t=token:self._on_narration_generated(t))
         worker.start()
+
+    def _sync_voice_enabled(self):
+        prefs = self.config.get("ui", {})
+        return (not self._voice_suppressed and prefs.get("voice_enabled", True)
+                and prefs.get("voice_mode", "narration") == "narration")
+
+    def _start_synced_narration(self, text, japanese, emotion, pose="talking", result=None):
+        prefetched = bool(self._prefetched_narration) and self._prefetched_narration == narration_text(japanese)
+        error = self._prefetch_error if prefetched else ""
+        if not prefetched:
+            self._start_narration(japanese, emotion)
+        self._prefetched_narration = ""
+        self._waiting_voice_result = False
+        self._synced_subtitle = (text, emotion, pose, result)
+        self.state_timer.stop()
+        self.set_character_state("thinking", "Menyiapkan suara karakter…", animate_typing=False)
+        if error:
+            self._on_narration_failed(self._tts_token, error)
+        elif self._tts_queue:
+            self._play_next_narration()
+
+    def _release_synced_subtitle(self):
+        pending = self._synced_subtitle
+        self._synced_subtitle = None
+        if pending:
+            text, emotion, pose, result = pending
+            if result is not None:
+                self._refresh_bubble_history()
+            self.set_character_state(pose, text, animate_typing=False, emotion_override=emotion)
 
     def _tick_narration_clock(self) -> None:
         if self._tts_pending:
@@ -1499,6 +1548,14 @@ class FrierenDeskWindow(QWidget):
     def _on_narration_ready(self, token, audio) -> None:
         if self._closing or token != self._tts_token:
             return
+        self._tts_queue.append(audio)
+        if not self._voice_active:
+            self._play_next_narration()
+
+    def _play_next_narration(self) -> None:
+        if self._closing or self._voice_active or self._waiting_voice_result or not self._tts_queue:
+            return
+        audio = self._tts_queue.pop(0)
         self._tts_pending = False
         self._tts_clock.stop()
         logging.info("Narration ready: engine=%s duration_ms=%s elapsed=%.1fs", audio.engine,
@@ -1510,12 +1567,25 @@ class FrierenDeskWindow(QWidget):
             self._update_ai_context(f"Narasi · {label}")
         else:
             logging.warning("Narration playback could not start")
+            self._release_synced_subtitle()
             self.chat_panel.stop_voice_btn.hide()
             self._update_ai_context("Audio tidak dapat diputar; jawaban tetap tersedia")
+
+    def _on_narration_generated(self, token) -> None:
+        if token != self._tts_token:
+            return
+        self._tts_generating = False
+        if not self._voice_active and not self._tts_queue:
+            self._tts_pending = False
+            self._tts_clock.stop()
+            self.chat_panel.stop_voice_btn.hide()
 
     def _on_narration_failed(self, token, message) -> None:
         if self._closing or token != self._tts_token:
             return
+        if self._waiting_voice_result:
+            self._prefetch_error = message
+        self._release_synced_subtitle()
         self._tts_pending = False
         self._tts_clock.stop()
         self.chat_panel.stop_voice_btn.hide()
@@ -1537,12 +1607,19 @@ class FrierenDeskWindow(QWidget):
         if self.chat_panel:
             self.chat_panel.stop_voice_btn.setVisible(active or self._tts_pending)
         if active:
+            self._release_synced_subtitle()
             if not self._worker or not self._worker.isRunning():
                 self.sprite.set_state("talking")
                 self.bubble.update_state_badge("talking")
             self.sprite.set_speaking(True)
         else:
             self.sprite.set_speaking(False)
+            if self._tts_queue:
+                QTimer.singleShot(0, self._play_next_narration)
+            elif self._tts_generating:
+                self._tts_pending = True
+                self._tts_clock.start()
+                self.chat_panel.stop_voice_btn.show()
             if not self._worker or not self._worker.isRunning():
                 state = EXPRESSION_STATES.get(self._manual_expression,"idle")
                 self.sprite.set_state(state)
@@ -1699,6 +1776,7 @@ class FrierenDeskWindow(QWidget):
             self.chat_panel.update_context(self.backend)
             return
         try:
+            self.stop_all_voice()
             self.backend.set_project(folder)
             self.clear_attachments()
             self.bubble.typing_timer.stop()
@@ -1747,8 +1825,20 @@ class FrierenDeskWindow(QWidget):
     def _on_stream_text(self, text: str) -> None:
         if self._closing:
             return
-        self._streamed = True
+        # The work panel stays responsive while the character subtitle waits
+        # for audio. Always strip the private Japanese dubbing block.
         self.chat_panel.set_partial(self.backend.subtitle_text(text))
+        if self._sync_voice_enabled():
+            voice = re.search(r"\[VOICE_JA\](.*?)\[/VOICE_JA\]", text, re.S | re.I)
+            if (voice and voice.group(1).strip() and not self._prefetched_narration
+                    and self.config.get("ui", {}).get("tts_engine", "qwen-local") == "qwen-local"):
+                self._start_narration(voice.group(1))
+                self._prefetched_narration = narration_text(voice.group(1))
+                self._waiting_voice_result = True
+            # Keep only the character bubble/mouth synchronized with audio.
+            self._update_ai_context("Menyiapkan jawaban dan dubbing karakter…")
+            return
+        self._streamed = True
         speech = self.backend.preview_speech(text)
         if speech:
             if not self._explanation_voiced:
@@ -1812,6 +1902,7 @@ class FrierenDeskWindow(QWidget):
     def _init_window_flags(self) -> None:
         self.setWindowTitle("Frieren Desk Companion")
         self.setMinimumSize(340,560)
+        self.setMouseTracking(True)
         self.resize(self.base_win_w,self.base_win_h)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -1832,7 +1923,7 @@ class FrierenDeskWindow(QWidget):
             sprites, blink_sprites = self.profile.assets(self.base_dir)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 6, 10, 10)
+        root.setContentsMargins(10, 10, 10, 24)
         root.setSpacing(4)
 
         # Top stretch pushes the speech bubble down so it sits right above Frieren's head!
@@ -2155,8 +2246,9 @@ class FrierenDeskWindow(QWidget):
         )
         self.setStyleSheet(self._base_style)
         self.resize_grip = QSizeGrip(self)
-        self.resize_grip.setFixedSize(16,16)
-        self.resize_grip.setToolTip("Geser untuk mengubah ukuran form karakter")
+        self.resize_grip.setFixedSize(22,22)
+        self.resize_grip.setStyleSheet("QSizeGrip { background: rgba(190, 155, 90, 100); border-radius: 5px; }")
+        self.resize_grip.setToolTip("Tarik sudut atau tepi jendela untuk memperlebar / memperkecil chat")
 
     def _init_shortcuts_and_tray(self) -> None:
         hotkey_label = "Cmd+Shift+Space" if sys.platform == "darwin" else "Ctrl+Shift+Space"
@@ -2690,6 +2782,9 @@ class FrierenDeskWindow(QWidget):
         self.bubble_hide_timer.start(self.bubble_autohide_ms)
 
     def _on_bubble_autohide_timeout(self) -> None:
+        if self._voice_active or self._tts_pending:
+            self._schedule_bubble_autohide()
+            return
         if not self.auto_hide_bubble or self.is_minimized or self._is_context_menu_open():
             if self._is_context_menu_open():
                 self._schedule_bubble_autohide()
@@ -2782,7 +2877,7 @@ class FrierenDeskWindow(QWidget):
     def _on_needs_tick(self) -> None:
         reminder = self.needs.tick(elapsed_seconds=60.0)
         self.bubble.update_needs_data(self.needs.data)
-        if self._manual_expression is not None:
+        if self._manual_expression is not None or self._voice_active or self._tts_pending:
             return
 
         # If Frieren is sleeping, keep her in sleeping state quietly without spamming bubble
@@ -3048,7 +3143,7 @@ class FrierenDeskWindow(QWidget):
     def _on_state_timer(self) -> None:
         if self._manual_expression is not None:
             return
-        if self._voice_active:
+        if self._voice_active or self._tts_pending:
             self.state_timer.start(200)
             return
         if self._worker and self._worker.isRunning():
@@ -3097,6 +3192,7 @@ class FrierenDeskWindow(QWidget):
         if self._worker and self._worker.isRunning():
             self.show_input_bar()
             return
+        self._voice_suppressed = False
         if self.is_minimized:
             self.set_minimized(False)
             return
@@ -3115,9 +3211,10 @@ class FrierenDeskWindow(QWidget):
             self.needs.wake_up()
             self.bubble.update_needs_data(self.needs.data)
             quote = "Hooam... eh, kamu menyapaku ya? Aku bangun kok... Ada yang bisa kubantu? ✦"
+            if self._sync_voice_enabled():
+                self._start_synced_narration(quote, "ふああ……あ、声をかけてくれたんだね。起きてるよ。何か手伝おうか？", "hangat", "pleased")
+                return
             self.set_character_state("pleased", quote, animate_typing=True, emotion_override="hangat")
-            if self.config.get("ui",{}).get("voice_mode","narration") == "narration":
-                self._start_narration("ふああ……あ、声をかけてくれたんだね。起きてるよ。何か手伝おうか？", "hangat")
             self._next_scheduled_state = "idle"
             self.state_timer.start(self.pleased_hold_ms)
             return
@@ -3131,6 +3228,9 @@ class FrierenDeskWindow(QWidget):
         # Pick a varied happy/cozy pose & warm emotion when clicked
         pose = random.choice(PLEASED_POSES)
         pet_emotion = random.choice(("senang", "tersentuh", "hangat", "ceria"))
+        if self._sync_voice_enabled():
+            self._start_synced_narration(quote, self.profile.voice_taps[idx], pet_emotion, pose)
+            return
         self.set_character_state(
             pose,
             quote,
@@ -3140,12 +3240,10 @@ class FrierenDeskWindow(QWidget):
         self._next_scheduled_state = "idle"
         self.state_timer.start(self.pleased_hold_ms)
 
-        if self.config.get("ui",{}).get("voice_mode","narration") == "narration":
-            self._start_narration(self.profile.voice_taps[idx], pet_emotion)
-
     def _clear_history(self, include_ltm: bool = False) -> None:
         if self._worker and self._worker.isRunning():
             return
+        self.stop_all_voice()
         self.backend.clear_memory(include_ltm=include_ltm)
         self._refresh_bubble_history()
         msg = (
@@ -3261,6 +3359,8 @@ class FrierenDeskWindow(QWidget):
         self._sync_expression_controls(None)
         self.sprite.set_speaking(False)
         self.stop_all_voice()
+
+        self._voice_suppressed = False
 
         # If Frieren was sleeping, she wakes up immediately to help
         if getattr(self, "needs", None) and self.needs.is_sleeping:
@@ -3379,8 +3479,6 @@ class FrierenDeskWindow(QWidget):
         if self.input_container.isVisible():
             self.input_box.setFocus()
 
-        self._refresh_bubble_history()
-
         # Update console output in background; ONLY visible if user toggled 💻 open
         self.bubble.set_cli_output(result.cli_output)
         self.bubble.output_available_btn.setVisible(bool(result.technical_output))
@@ -3391,6 +3489,10 @@ class FrierenDeskWindow(QWidget):
 
         emotion = result.emotion or self._infer_emotion_from_text(result.speech)
         talk_pose = random.choice(("talking", "talking_explain"))
+        if self._sync_voice_enabled() and result.narration_ja and result.status == "completed":
+            self._start_synced_narration(result.speech, result.narration_ja, emotion, talk_pose, result)
+            return
+        self._refresh_bubble_history()
         self.set_character_state(
             talk_pose,
             result.speech,
@@ -3398,6 +3500,8 @@ class FrierenDeskWindow(QWidget):
             emotion_override=emotion,
         )
         if self.config.get("ui",{}).get("voice_mode","narration") == "narration":
+            if self._voice_suppressed:
+                return
             if result.narration_ja:
                 self._start_narration(result.narration_ja,result.emotion)
             else:
@@ -3419,7 +3523,7 @@ class FrierenDeskWindow(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if hasattr(self,"resize_grip"):
-            self.resize_grip.move(self.width()-20,self.height()-20)
+            self.resize_grip.move(self.width()-26,self.height()-26)
             self.resize_grip.raise_()
         if hasattr(self,"bubble"):
             self.bubble.setMaximumWidth(max(280,self.width()-20))
@@ -3427,8 +3531,27 @@ class FrierenDeskWindow(QWidget):
         if hasattr(self,"_window_resize_timer"):
             self._window_resize_timer.start(350)
 
+    def _resize_edges(self, pos):
+        edges = Qt.Edge(0)
+        if self.is_minimized:
+            return edges
+        if pos.x() < 10:
+            edges |= Qt.Edge.LeftEdge
+        elif pos.x() >= self.width()-10:
+            edges |= Qt.Edge.RightEdge
+        if pos.y() < 10:
+            edges |= Qt.Edge.TopEdge
+        elif pos.y() >= self.height()-10:
+            edges |= Qt.Edge.BottomEdge
+        return edges
+
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
+            edges = self._resize_edges(event.position().toPoint())
+            if edges and self.windowHandle() and self.windowHandle().startSystemResize(edges):
+                self._drag_offset = None
+                event.accept()
+                return
             self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             self._press_pos = event.globalPosition().toPoint()
         elif event.button() == Qt.MouseButton.RightButton:
@@ -3436,6 +3559,16 @@ class FrierenDeskWindow(QWidget):
                 self.tray.contextMenu().popup(event.globalPosition().toPoint())
 
     def mouseMoveEvent(self, event) -> None:
+        edges = self._resize_edges(event.position().toPoint())
+        horizontal = bool(edges & (Qt.Edge.LeftEdge | Qt.Edge.RightEdge))
+        vertical = bool(edges & (Qt.Edge.TopEdge | Qt.Edge.BottomEdge))
+        if horizontal and vertical:
+            diagonal = edges in (Qt.Edge.LeftEdge | Qt.Edge.TopEdge, Qt.Edge.RightEdge | Qt.Edge.BottomEdge)
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor if diagonal else Qt.CursorShape.SizeBDiagCursor)
+        elif horizontal or vertical:
+            self.setCursor(Qt.CursorShape.SizeHorCursor if horizontal else Qt.CursorShape.SizeVerCursor)
+        else:
+            self.unsetCursor()
         if self._drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
             self.move(event.globalPosition().toPoint() - self._drag_offset)
 
@@ -3492,6 +3625,10 @@ def main() -> int:
 
     window = FrierenDeskWindow(base_dir)
     app.aboutToQuit.connect(window._cleanup_workers)
+    app.aboutToQuit.connect(clone_service.stop)
+    prefs = window.config.get("ui", {})
+    if prefs.get("voice_enabled", True) and prefs.get("tts_engine", "qwen-local") == "qwen-local":
+        clone_service.start(base_dir)
     window.show()
     logging.info("Application started (panel=%s)", show_panel)
     if show_panel:

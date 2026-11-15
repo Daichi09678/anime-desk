@@ -44,6 +44,9 @@
   },
   "ui": {
     "character": "frieren",
+    "voice_enabled": true,
+    "voice_mode": "narration",
+    "tts_engine": "qwen-local",
     "chat_panel_size": [800, 720],
     "sound_enabled": true,
     "history_enabled": false,
