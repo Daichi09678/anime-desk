@@ -423,8 +423,9 @@ class CodexBackend:
             lines += ["Gambar dikirim sebagai input gambar native. File/folder lain dapat dibaca dari path di atas."]
         lines += ["", "=== PESAN BARU ===", user_message.strip() or "Tolong analisis lampiran ini.", "",
                   "Ucapan utama hangat dan ringkas; berikan detail yang cukup sesuai tugas pengguna.",
-                  "Teks jawaban/subtitle wajib bahasa Indonesia. Setelah jawaban dan blok output, tulis "
+                  "Teks jawaban/subtitle wajib bahasa Indonesia. Sebelum jawaban Indonesia dan blok output, tulis "
                   "[VOICE_JA]terjemahan Jepang dari seluruh ucapan utama[/VOICE_JA]. "
+                  "Letakkan blok VOICE_JA di awal respons final agar dubbing bisa disiapkan sambil subtitle Indonesia dikirim. "
                   "Bagian VOICE_JA hanya untuk dubbing suara, bukan subtitle. Gunakan bahasa Jepang alami sesuai persona karakter aktif. "
                   "Makna, angka, hasil, dan kendala harus sama dengan subtitle Indonesia; jangan menambah klaim atau mengganti dengan sapaan. "
                   "Sesuaikan register dan kosakata dengan topik; untuk coding jelaskan hasil, langkah, atau kendala yang benar-benar terjadi. "
@@ -432,6 +433,12 @@ class CodexBackend:
                   "Letakkan kode/hasil teknis panjang dalam blok ```output ... ```.",
                   "Fakta baru yang relevan dapat ditandai [MEMORY_SAVE: fakta]. Dalam proyek, tag ini menyimpan memori proyek.",
                   "Akhiri dengan [EMOTION: senang|hangat|antusias|penasaran|tenang|ceria|tersentuh|nostalgia|fokus|mengantuk]."]
+        if self.config.get("ui", {}).get("voice_enabled", True):
+            lines += ["Mode percakapan bersuara: untuk sapaan atau pertanyaan sederhana, ucapan utama cukup satu kalimat singkat yang langsung menjawab. "
+                      "Untuk tugas kompleks, ucapan utama cukup 1–2 kalimat hasil terpenting; seluruh penjelasan, langkah, contoh, dan detail yang diminta "
+                      "tetap berikan di blok ```output ... ``` agar bisa dibaca tanpa narasi panjang. "
+                      "Usahakan terjemahan Jepang ucapan utama sekitar 20–45 karakter bila maknanya memungkinkan. "
+                      "Jangan memotong fakta penting atau hanya menyapa. Makna VOICE_JA harus tetap sama dengan ucapan utama Indonesia."]
         return "\n".join(lines)
 
     def ask(self, user_message, on_status=None, attachments=None, on_text=None, cancel_event=None):
