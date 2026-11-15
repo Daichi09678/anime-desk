@@ -1,6 +1,7 @@
 """Lightweight local-clone configuration, with no ML imports in the Qt process."""
 import json
 import math
+import os
 from pathlib import Path
 import sys
 
@@ -8,6 +9,19 @@ import sys
 def runtime(base_dir):
     folder = Path(base_dir) / ".venv-voice"
     return folder / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+
+
+def cpu_settings(base_dir):
+    """Machine-specific CPU tuning with bounded thread usage."""
+    try:
+        config = json.loads((Path(base_dir) / "config.json").read_text(encoding="utf-8"))
+        settings = config.get("voice_runtime", {})
+        threads = int(settings.get("cpu_threads", 4))
+        attention = settings.get("attention", "eager")
+    except (OSError, ValueError, TypeError, AttributeError):
+        threads, attention = 4, "eager"
+    return {"cpu_threads":max(1, min(threads, os.cpu_count() or 1)),
+            "attention":attention if attention in ("eager", "sdpa") else "eager"}
 
 
 def reference_for(base_dir, character):
