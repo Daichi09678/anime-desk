@@ -115,6 +115,58 @@ Untuk tes GUI tanpa desktop, jalankan dengan environment `QT_QPA_PLATFORM=offscr
 
 ## 📋 Persyaratan Sistem (Prerequisites)
 
+### Rekomendasi spesifikasi untuk chat dan cloning suara lokal
+
+**Prioritas upgrade untuk mempercepat cloning Qwen adalah GPU NVIDIA dengan
+dukungan CUDA.** RAM 32 GB dan CPU kelas Ryzen 5 5600 masih layak dipertahankan
+untuk aplikasi desktop dan chat melalui Codex/Antigravity.
+
+| Komponen | Upgrade paling masuk akal | Sangat direkomendasikan untuk rakitan baru |
+|---|---|---|
+| GPU | NVIDIA RTX 4060 Ti **16 GB** atau RTX 5060 Ti **16 GB** | NVIDIA RTX 5070 Ti **16 GB** atau RTX 5080 **16 GB** |
+| CPU | AMD Ryzen 5 5600 atau setara | AMD Ryzen 9 9900X / 9950X |
+| RAM | **32 GB** untuk aplikasi dan Qwen TTS lokal | **64 GB** jika juga menjalankan model chat lokal; kebutuhan bergantung pada ukuran model |
+| Penyimpanan | SSD NVMe dengan ruang kosong untuk model dan cache | SSD NVMe PCIe 4.0, kapasitas **1–2 TB** |
+| PSU | Sesuai kebutuhan GPU dan komponen lainnya | PSU berkualitas sesuai rekomendasi produsen GPU |
+
+Spesifikasi di atas adalah **rekomendasi upgrade, bukan persyaratan minimum atau
+hasil benchmark GPU proyek ini**. VRAM 16 GB memberi ruang untuk pengembangan;
+bukan berarti model Qwen TTS 0.6B selalu membutuhkan seluruh kapasitas tersebut.
+Periksa juga ukuran GPU, konektor daya, dan kapasitas PSU sebelum upgrade.
+
+#### Status akselerasi GPU pada aplikasi
+
+- Implementasi cloning saat ini memakai **CPU** (`device_map="cpu"` di
+  `local_voice_process.py`), dan panduan instalasi di README ini memasang PyTorch CPU.
+- Memasang GPU NVIDIA saja **belum mengaktifkan akselerasi**. Pemakaian GPU
+  memerlukan PyTorch dengan CUDA yang sesuai GPU/driver, perubahan pemuatan model
+  ke CUDA, serta pengujian kompatibilitas dan kualitas audio.
+- Contoh PC yang diuji: **Ryzen 5 5600, Radeon RX 6600 XT, RAM 32 GB**.
+  Pada konfigurasi aplikasi saat ini, cloning berjalan di CPU; Radeon tersebut
+  belum dipakai untuk inferensi suara. CUDA merupakan teknologi NVIDIA.
+- CPU-only tetap dapat digunakan, tetapi pembuatan narasi baru dapat memerlukan
+  puluhan detik, bergantung pada panjang teks. GPU yang direkomendasikan belum
+  dibenchmark untuk proyek ini, sehingga belum ada jaminan respons di bawah satu detik.
+
+#### Apa yang memengaruhi kecepatan respons?
+
+1. **Jawaban AI melalui Codex/Antigravity:** dipengaruhi model yang dipilih,
+   tingkat reasoning, jaringan, dan antrean server. Untuk percakapan ringan,
+   gunakan model cepat dengan reasoning rendah. Upgrade GPU lokal tidak langsung
+   mempercepat inferensi AI yang berjalan di server.
+2. **Cloning suara lokal:** dipengaruhi perangkat inferensi, model, panjang
+   narasi, dan cache. GPU NVIDIA menjadi prioritas setelah jalur CUDA diaktifkan.
+3. **Suara mengalir tanpa jeda:** targetnya adalah pembuatan audio lebih cepat
+   daripada durasi audio tersebut. Streaming juga memerlukan pengaturan buffer
+   dan sinkronisasi teks–suara; peningkatan hardware saja tidak cukup.
+
+**Saran upgrade bertahap:** pertahankan Ryzen 5 5600 dan RAM 32 GB, prioritaskan
+GPU NVIDIA 16 GB, lalu aktifkan dan uji jalur CUDA. Untuk anggaran lebih besar,
+RTX 5070 Ti 16 GB memberi ruang komputasi lebih luas tanpa harus langsung
+mengganti seluruh PC.
+
+### Software yang diperlukan
+
 Sebelum menjalankan Frieren Desk Companion, pastikan hal-hal berikut sudah terpasang di komputermu:
 
 ### 1. Python 3.11 atau Lebih Baru
