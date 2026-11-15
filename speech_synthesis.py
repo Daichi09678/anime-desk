@@ -13,7 +13,8 @@ import uuid
 from PySide6.QtCore import QThread, Signal
 
 from cli_process import ProcessCancelled, ProcessRunner
-from local_voice import reference_for, runtime as clone_runtime
+from local_voice import reference_for, cpu_settings
+from clone_service import clone_service
 
 CLONE_LOCK = threading.Lock()
 
@@ -45,6 +46,13 @@ def speech_style(character, emotion):
     return style
 
 
+def narration_chunks(text):
+    """Keep the first audio short without dropping any part of the answer."""
+    return [sentence[i:i+160] for sentence in
+            re.findall(r"[^。！？!?]+[。！？!?]?", text)
+            for i in range(0, len(sentence), 160) if sentence[i:i+160].strip()]
+
+
 @dataclass
 class NarrationAudio:
     file: Path
@@ -69,6 +77,17 @@ class NarrationWorker(QThread):
         self.cancel_event.set()
 
     def run(self):
+        if self.engine == "qwen-local":
+            self._synthesize()
+            return
+        for chunk in narration_chunks(self.text) or [""]:
+            if self.cancel_event.is_set():
+                break
+            self.text = chunk
+            if not self._synthesize():
+                break
+
+    def _synthesize(self):
         try:
             if not self.text:
                 if not self.cancel_event.is_set():
@@ -77,7 +96,11 @@ class NarrationWorker(QThread):
             folder = self.base_dir / "data/tts" / self.character
             folder.mkdir(parents=True,exist_ok=True)
             reference = reference_for(self.base_dir, self.character) if self.engine == "qwen-local" else None
-            key = hashlib.sha256(json.dumps([self.text,self.style,self.engine,reference,"ja-clone-v2"],sort_keys=True).encode()).hexdigest()[:24]
+            tuning = cpu_settings(self.base_dir) if self.engine == "qwen-local" else None
+            # Qwen uses the character reference, not Edge's emotion/rate/pitch.
+            # Do not regenerate the same character line just because its mood changed.
+            cache_style = None if self.engine == "qwen-local" else self.style
+            key = hashlib.sha256(json.dumps([self.text,cache_style,self.engine,reference,tuning,"ja-clone-v3"],sort_keys=True).encode()).hexdigest()[:24]
             python = Path(sys.executable)
             console = python.with_name("python.exe") if sys.platform == "win32" else python
             if not console.is_file():
@@ -94,15 +117,16 @@ class NarrationWorker(QThread):
                         payload = {"text":self.text,"style":self.style,"output":str(temporary),"engine":engine}
                         if engine == "qwen-local":
                             payload["reference"] = reference
+                            # CPU synthesis is slower than playback. Publish the
+                            # complete WAV, otherwise every sentence underruns.
+                            payload["stream_chunks"] = False
                             while not CLONE_LOCK.acquire(timeout=0.1):
                                 if self.cancel_event.is_set():
                                     raise ProcessCancelled()
                             try:
                                 if self.cancel_event.is_set():
                                     raise ProcessCancelled()
-                                result = ProcessRunner(self.cancel_event).run(
-                                    [str(clone_runtime(self.base_dir)),str(Path(__file__).with_name("local_voice_process.py"))],
-                                    cwd=self.base_dir,timeout=1800,input_text=json.dumps(payload,ensure_ascii=False))
+                                result = clone_service.synthesize(self.base_dir, payload, self.cancel_event, lambda line:None)
                             finally:
                                 CLONE_LOCK.release()
                         else:
@@ -117,7 +141,11 @@ class NarrationWorker(QThread):
                     duration = round(info.info.length*1000) if info is not None else 0
                     if duration <= 0:
                         raise RuntimeError("Durasi narasi tidak valid.")
-                    for old in sorted((p for p in folder.glob("*") if ".part." not in p.name),key=lambda p:p.stat().st_mtime,reverse=True)[4:]:
+                    # Never delete chunks still queued for playback.
+                    import time
+                    for old in folder.glob("*"):
+                        if time.time() - old.stat().st_mtime < 86400:
+                            continue
                         if old.is_file() and old != output:
                             try:
                                 old.unlink()
@@ -125,7 +153,7 @@ class NarrationWorker(QThread):
                                 pass
                     if not self.cancel_event.is_set():
                         self.ready.emit(NarrationAudio(output,duration,engine))
-                    return
+                    return True
                 except ProcessCancelled:
                     raise
                 except Exception as exc:

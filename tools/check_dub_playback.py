@@ -42,28 +42,36 @@ def main():
         window.config["ui"].update(voice_enabled=True, voice_mode="narration", tts_engine="qwen-local")
         window.show()
         outcomes = []
+        synced = []
         phase = ["click"]
         started = time.monotonic()
 
         def speaking(active):
             if active:
+                expected = (window.profile.taps[window._last_pet_idx] if phase[0] == "click"
+                            else "Hasil enam kali tujuh adalah empat puluh dua. Kita bisa lanjut ke langkah berikutnya.")
+                if window.bubble._full_text == expected and not window.bubble.typing_timer.isActive():
+                    synced.append(phase[0])
+                # Local CPU playback must be one complete clip per utterance,
+                # not separate clips with synthesis pauses between them.
                 outcomes.append(phase[0])
                 print("PLAYBACK_STARTED", identifier, phase[0], flush=True)
-            elif outcomes and not window._tts_pending:
-                if phase[0] == "click":
-                    phase[0] = "reply"
-                    QTimer.singleShot(100, lambda: window._on_codex_result(CodexResult(
-                        "Hasil enam kali tujuh adalah empat puluh dua.", "", [],
-                        narration_ja="六掛ける七の答えは四十二だ。")))
-                elif outcomes == ["click", "reply"]:
-                    app.quit()
 
         def watchdog():
             if time.monotonic() - started > 180:
                 app.quit()
-            elif not window._tts_pending and not window._voice_active and not outcomes:
-                print("PLAYBACK_FAILED", window.chat_panel.status.text(), flush=True)
-                app.quit()
+            elif not window._tts_generating and not window._voice_active and not window._tts_queue:
+                if phase[0] not in outcomes:
+                    print("PLAYBACK_FAILED", window.chat_panel.status.text(), flush=True)
+                    app.quit()
+                    return
+                if phase[0] == "click":
+                    phase[0] = "reply"
+                    QTimer.singleShot(100, lambda: window._on_codex_result(CodexResult(
+                        "Hasil enam kali tujuh adalah empat puluh dua. Kita bisa lanjut ke langkah berikutnya.", "", [],
+                        narration_ja="六掛ける七の答えは四十二だ。次の手順に進もう。")))
+                elif outcomes == ["click", "reply"]:
+                    app.quit()
 
         window.voice.speakingChanged.connect(speaking)
         window.voice.statusChanged.connect(lambda text: print("AUDIO_STATUS", text, flush=True))
@@ -76,6 +84,8 @@ def main():
         window.hide()
         window.deleteLater()
         assert outcomes == ["click", "reply"], outcomes
+        assert set(synced) == {"click", "reply"}, synced
+        print("SUBTITLE_AUDIO_START_SYNC_OK", identifier, flush=True)
         print("CLICK_AND_REPLY_PLAYBACK_OK", identifier, flush=True)
 
 
