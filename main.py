@@ -1434,7 +1434,7 @@ class FrierenDeskWindow(QWidget):
         self.profile = profile
         self._manual_expression = None
         self.state_timer.stop()
-        self.sprite.set_sprites(sprites,blink,profile.mouth_frames(self.base_dir))
+        self.sprite.set_sprites(sprites,blink,profile.mouth_frames(self.base_dir),profile.portrait_frame)
         self._apply_character_theme()
         self._sync_expression_controls(None)
         self.chat_panel.update_context(self.backend)
@@ -1543,7 +1543,7 @@ class FrierenDeskWindow(QWidget):
     def _tick_narration_clock(self) -> None:
         if self._tts_pending:
             elapsed = int(time.monotonic() - self._tts_started)
-            self._update_ai_context(f"Menyiapkan dub Jepang · {elapsed} detik (cloning CPU bisa lambat)")
+            self._update_ai_context(f"Menyiapkan dub Jepang · {elapsed} detik")
 
     def _on_narration_ready(self, token, audio) -> None:
         if self._closing or token != self._tts_token:
@@ -1831,7 +1831,7 @@ class FrierenDeskWindow(QWidget):
         if self._sync_voice_enabled():
             voice = re.search(r"\[VOICE_JA\](.*?)\[/VOICE_JA\]", text, re.S | re.I)
             if (voice and voice.group(1).strip() and not self._prefetched_narration
-                    and self.config.get("ui", {}).get("tts_engine", "qwen-local") == "qwen-local"):
+                     and self.config.get("ui", {}).get("tts_engine", "qwen-local") in ("qwen-local", "fast")):
                 self._start_narration(voice.group(1))
                 self._prefetched_narration = narration_text(voice.group(1))
                 self._waiting_voice_result = True
@@ -1963,9 +1963,9 @@ class FrierenDeskWindow(QWidget):
 
         self.sprite = FrierenSpriteWidget(
             sprites, fade_ms=self.fade_ms, parent=self,
-            motion_mode=self.config.get("ui", {}).get("motion_mode", "natural"),
+            motion_mode=self.config.get("ui", {}).get("motion_mode", "reduced"),
         )
-        self.sprite.set_sprites(sprites,blink_sprites,self.profile.mouth_frames(self.base_dir))
+        self.sprite.set_sprites(sprites,blink_sprites,self.profile.mouth_frames(self.base_dir),self.profile.portrait_frame)
         root.addWidget(self.sprite, alignment=Qt.AlignmentFlag.AlignRight)
 
         # Attachment Preview Bar (shown above input bar when user pastes/drops images or files)
@@ -3626,9 +3626,6 @@ def main() -> int:
     window = FrierenDeskWindow(base_dir)
     app.aboutToQuit.connect(window._cleanup_workers)
     app.aboutToQuit.connect(clone_service.stop)
-    prefs = window.config.get("ui", {})
-    if prefs.get("voice_enabled", True) and prefs.get("tts_engine", "qwen-local") == "qwen-local":
-        clone_service.start(base_dir)
     window.show()
     logging.info("Application started (panel=%s)", show_panel)
     if show_panel:

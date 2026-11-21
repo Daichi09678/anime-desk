@@ -245,7 +245,7 @@ class VoiceDialog(QDialog):
         self.enabled = QCheckBox("Aktifkan suara karakter")
         self.enabled.setChecked(enabled)
         root.addWidget(self.enabled)
-        help_text = QLabel("Subtitle jawaban memakai bahasa Indonesia; narasi membacakan terjemahannya dalam bahasa Jepang. Qwen lokal memakai sample karakter untuk cloning; Edge/Windows memakai suara sintetis umum. Cloning CPU dapat memerlukan puluhan detik. Pilih rentang 3–15 detik berisi satu pembicara tanpa musik; sample awal masih draft. Kemiripan tidak dijamin identik.")
+        help_text = QLabel("Narasi membaca terjemahan Jepang dari subtitle Indonesia. Cepat & Ringan memutar sapaan karakter yang sudah disiapkan; teks lainnya dikirim ke Edge untuk suara sintetis online. Cloning Qwen untuk teks baru berjalan di CPU dan bisa memerlukan puluhan detik. Untuk referensi cloning, pilih audio 3–15 detik berisi satu pembicara tanpa musik.")
         help_text.setWordWrap(True)
         root.addWidget(help_text)
         form = QFormLayout()
@@ -256,6 +256,7 @@ class VoiceDialog(QDialog):
         form.addRow("Mode suara",self.mode)
         self.engine = QComboBox()
         self.engine.addItem("Cloning lokal · Qwen3, sample karakter (CPU)","qwen-local")
+        self.engine.addItem("Cepat & Ringan · sapaan siap putar + Edge online","fast")
         self.engine.addItem("Otomatis · Jepang online, fallback Windows Jepang","auto")
         self.engine.addItem("Jepang online · suara sintetis","edge")
         if sys.platform == "win32":

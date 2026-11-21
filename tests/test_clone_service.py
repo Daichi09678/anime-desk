@@ -60,3 +60,16 @@ class CloneServiceTests(unittest.TestCase):
         self.assertIsNone(self.service.thread)
         self.service.synthesize(Path.cwd(), {"reference":"frieren"}, threading.Event(), lambda line:None)
         self.assertEqual(len(FakeRunner.instances), 2)
+
+    def test_releases_idle_worker_and_starts_fresh_on_next_request(self):
+        self.service.idle_seconds = 0.2
+        self.assertEqual(FakeRunner.instances, [])
+        request = {"reference":"frieren"}
+        self.service.synthesize(Path.cwd(), request, threading.Event(), lambda line:None)
+        thread = self.service.thread
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(FakeRunner.instances[0].cancel.is_set())
+        result = self.service.synthesize(Path.cwd(), request, threading.Event(), lambda line:None)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(len(FakeRunner.instances), 2)

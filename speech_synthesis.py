@@ -11,7 +11,9 @@ import threading
 import uuid
 
 from PySide6.QtCore import QThread, Signal
+from mutagen import File, MutagenError
 
+from character_profiles import PROFILES
 from cli_process import ProcessCancelled, ProcessRunner
 from local_voice import reference_for, cpu_settings
 from clone_service import clone_service
@@ -60,6 +62,14 @@ class NarrationAudio:
     engine: str
 
 
+def _cached_audio(path, engine):
+    if not path.is_file() or path.stat().st_size < 100:
+        return None
+    info = File(str(path))
+    duration = round(info.info.length * 1000) if info is not None else 0
+    return NarrationAudio(path, duration, engine) if duration > 0 else None
+
+
 class NarrationWorker(QThread):
     ready = Signal(object)
     failed = Signal(str)
@@ -77,6 +87,17 @@ class NarrationWorker(QThread):
         self.cancel_event.set()
 
     def run(self):
+        if self.engine == "fast":
+            if self.cancel_event.is_set():
+                return
+            audio = self._ready_greeting()
+            if audio:
+                if not self.cancel_event.is_set():
+                    self.ready.emit(audio)
+            else:
+                self.engine = "edge"
+                self._synthesize()
+            return
         if self.engine == "qwen-local":
             self._synthesize()
             return
@@ -87,20 +108,41 @@ class NarrationWorker(QThread):
             if not self._synthesize():
                 break
 
+    def _greeting_folder(self):
+        profile = PROFILES.get(self.character)
+        if profile and self.text in map(narration_text, profile.voice_taps):
+            return self.base_dir / "data/tts/presets" / self.character
+        return None
+
+    def _cache_key(self, engine, reference, tuning):
+        # Qwen uses the character reference, not Edge's emotion/rate/pitch.
+        cache_style = None if engine == "qwen-local" else self.style
+        identity = [self.text, cache_style, engine, reference, tuning, "ja-clone-v3"]
+        return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
+
+    def _ready_greeting(self):
+        folder = self._greeting_folder()
+        if folder is None:
+            return None
+        try:
+            key = self._cache_key("qwen-local", reference_for(self.base_dir, self.character),
+                                  cpu_settings(self.base_dir))
+            return _cached_audio(folder / f"{key}_qwen-local.wav", "qwen-local")
+        except (OSError, ValueError, TypeError, KeyError, MutagenError):
+            return None
+
     def _synthesize(self):
         try:
             if not self.text:
                 if not self.cancel_event.is_set():
                     self.failed.emit("Tidak ada teks yang dapat dinarasikan.")
                 return
-            folder = self.base_dir / "data/tts" / self.character
+            preset_folder = self._greeting_folder() if self.engine == "qwen-local" else None
+            folder = preset_folder or self.base_dir / "data/tts" / self.character
             folder.mkdir(parents=True,exist_ok=True)
             reference = reference_for(self.base_dir, self.character) if self.engine == "qwen-local" else None
             tuning = cpu_settings(self.base_dir) if self.engine == "qwen-local" else None
-            # Qwen uses the character reference, not Edge's emotion/rate/pitch.
-            # Do not regenerate the same character line just because its mood changed.
-            cache_style = None if self.engine == "qwen-local" else self.style
-            key = hashlib.sha256(json.dumps([self.text,cache_style,self.engine,reference,tuning,"ja-clone-v3"],sort_keys=True).encode()).hexdigest()[:24]
+            key = self._cache_key(self.engine, reference, tuning)
             python = Path(sys.executable)
             console = python.with_name("python.exe") if sys.platform == "win32" else python
             if not console.is_file():
@@ -136,23 +178,21 @@ class NarrationWorker(QThread):
                         if result.returncode or not temporary.is_file() or temporary.stat().st_size < 100:
                             raise RuntimeError(result.stderr[-600:] or "TTS tidak menghasilkan audio.")
                         temporary.replace(output)
-                    from mutagen import File
-                    info = File(str(output))
-                    duration = round(info.info.length*1000) if info is not None else 0
-                    if duration <= 0:
+                    audio = _cached_audio(output, engine)
+                    if audio is None:
                         raise RuntimeError("Durasi narasi tidak valid.")
-                    # Never delete chunks still queued for playback.
-                    import time
-                    for old in folder.glob("*"):
-                        if time.time() - old.stat().st_mtime < 86400:
-                            continue
-                        if old.is_file() and old != output:
+                    if preset_folder is None:
+                        # Never delete preset greetings or chunks still queued for playback.
+                        import time
+                        for old in folder.glob("*"):
                             try:
+                                if old == output or time.time() - old.stat().st_mtime < 86400 or not old.is_file():
+                                    continue
                                 old.unlink()
                             except OSError:
                                 pass
                     if not self.cancel_event.is_set():
-                        self.ready.emit(NarrationAudio(output,duration,engine))
+                        self.ready.emit(audio)
                     return True
                 except ProcessCancelled:
                     raise

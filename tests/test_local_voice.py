@@ -6,6 +6,7 @@ from unittest.mock import patch
 import wave
 
 from cli_process import ProcessResult
+from character_profiles import PROFILES
 from local_voice import reference_for, cpu_settings
 from speech_synthesis import NarrationWorker, speech_style, narration_text
 from codex_backend import CodexBackend
@@ -37,7 +38,8 @@ class LocalVoiceTests(unittest.TestCase):
             reference_for(self.root,"beatrice")
 
     def test_cpu_tuning_is_bounded(self):
-        self.assertEqual(cpu_settings(self.root)["attention"], "eager")
+        with patch("local_voice.os.cpu_count", return_value=12):
+            self.assertEqual(cpu_settings(self.root), {"cpu_threads":3, "attention":"sdpa"})
         (self.root / "config.json").write_text(json.dumps({"voice_runtime":{
             "cpu_threads":999, "attention":"sdpa"}}))
         with patch("local_voice.os.cpu_count", return_value=12):
@@ -77,6 +79,43 @@ class LocalVoiceTests(unittest.TestCase):
         with patch("speech_synthesis.clone_service.synthesize") as run:
             worker.run()
             run.assert_not_called()
+
+    def test_fast_mode_plays_prepared_clone_without_launching_a_process(self):
+        greeting = PROFILES["beatrice"].voice_taps[0]
+        def clone(base_dir, payload, cancel, on_stdout):
+            self.audio(Path(payload["output"]))
+            return ProcessResult(0, "", "")
+        with patch("speech_synthesis.clone_service.synthesize", side_effect=clone):
+            NarrationWorker(self.root, "beatrice", greeting, engine="qwen-local").run()
+
+        ready = []
+        worker = NarrationWorker(self.root, "beatrice", greeting, engine="fast")
+        worker.ready.connect(ready.append)
+        with patch("speech_synthesis.clone_service.synthesize") as clone, \
+                patch("speech_synthesis.ProcessRunner") as synthetic:
+            worker.run()
+        clone.assert_not_called()
+        synthetic.assert_not_called()
+        self.assertEqual(len(ready), 1)
+        self.assertEqual(ready[0].engine, "qwen-local")
+
+    def test_fast_mode_sends_one_complete_japanese_reply_to_edge(self):
+        text = "結果は四十二だ。次の手順を説明する。"
+        ready = []
+        def synthesize(command, **kwargs):
+            payload = json.loads(kwargs["input_text"])
+            self.assertEqual((payload["engine"], payload["text"]), ("edge", text))
+            self.audio(Path(payload["output"]))
+            return ProcessResult(0, "", "")
+        worker = NarrationWorker(self.root, "beatrice", text, engine="fast")
+        worker.ready.connect(ready.append)
+        with patch("speech_synthesis.clone_service.synthesize") as clone, \
+                patch("speech_synthesis.ProcessRunner.run", side_effect=synthesize) as synthetic:
+            worker.run()
+        clone.assert_not_called()
+        synthetic.assert_called_once()
+        self.assertEqual(len(ready), 1)
+        self.assertEqual(ready[0].engine, "edge")
 
     def test_first_sentence_ready_before_next_sentence_is_generated(self):
         ready, texts = [], []

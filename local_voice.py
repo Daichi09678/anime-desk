@@ -6,6 +6,10 @@ from pathlib import Path
 import sys
 
 
+DEFAULT_CPU_THREADS = 3
+DEFAULT_ATTENTION = "sdpa"
+
+
 def runtime(base_dir):
     folder = Path(base_dir) / ".venv-voice"
     return folder / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
@@ -16,12 +20,12 @@ def cpu_settings(base_dir):
     try:
         config = json.loads((Path(base_dir) / "config.json").read_text(encoding="utf-8"))
         settings = config.get("voice_runtime", {})
-        threads = int(settings.get("cpu_threads", 4))
-        attention = settings.get("attention", "eager")
-    except (OSError, ValueError, TypeError, AttributeError):
-        threads, attention = 4, "eager"
+        threads = int(settings.get("cpu_threads", DEFAULT_CPU_THREADS))
+        attention = settings.get("attention", DEFAULT_ATTENTION)
+    except (OSError, ValueError, TypeError, AttributeError, OverflowError):
+        threads, attention = DEFAULT_CPU_THREADS, DEFAULT_ATTENTION
     return {"cpu_threads":max(1, min(threads, os.cpu_count() or 1)),
-            "attention":attention if attention in ("eager", "sdpa") else "eager"}
+            "attention":attention if attention in ("eager", "sdpa") else DEFAULT_ATTENTION}
 
 
 def reference_for(base_dir, character):

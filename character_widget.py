@@ -32,6 +32,7 @@ class FrierenSpriteWidget(QWidget):
         self.setFixedSize(*self._base_normal_size)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._paths = dict(sprites)
+        self._portrait_frame = None
         self._blink_keys = {}
         self._mouth_keys = {}
         self._speaking = False
@@ -66,9 +67,14 @@ class FrierenSpriteWidget(QWidget):
         image = reader.read()
         # Align visible artwork, not differently padded source canvases. Matching
         # mouth/blink alpha gives exactly the same crop and body anchor.
-        bounds = QRegion(QBitmap.fromImage(image.createAlphaMask())).boundingRect()
-        if not bounds.isEmpty():
-            image = image.copy(bounds)
+        pose = self._paths[state].stem.split("_")[0]
+        frame = self._portrait_frame(pose) if self._portrait_frame else None
+        if frame and not image.isNull():
+            image = image.copy(*frame)
+        else:
+            bounds = QRegion(QBitmap.fromImage(image.createAlphaMask())).boundingRect()
+            if not bounds.isEmpty():
+                image = image.copy(bounds)
         pix = QPixmap.fromImage(image).scaled(target_size, Qt.AspectRatioMode.KeepAspectRatio,
                                              Qt.TransformationMode.SmoothTransformation)
         self.pixmaps[state] = pix
@@ -113,13 +119,14 @@ class FrierenSpriteWidget(QWidget):
         self._sync_motion_timer()
         self.update()
 
-    def set_sprites(self, sprites, blink_sprites=None, mouth_sprites=None) -> None:
+    def set_sprites(self, sprites, blink_sprites=None, mouth_sprites=None, portrait_frame=None) -> None:
         """Release the previous character's textures before loading the next."""
         self.fade_anim.stop()
         self._transition_source = None
         self._transition_region = QRegion()
         self._fade_progress = 1.0
         self._paths = dict(sprites)
+        self._portrait_frame = portrait_frame
         self._blink_keys = {}
         self._mouth_keys = {}
         for state, path in (blink_sprites or {}).items():

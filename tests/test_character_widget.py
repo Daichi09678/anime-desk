@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from PySide6.QtCore import QAbstractAnimation
+from PySide6.QtCore import QAbstractAnimation, QPoint
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -71,12 +71,18 @@ class CharacterWidgetTests(unittest.TestCase):
             self.widget.set_scale_factor(scale)
             for profile in PROFILES.values():
                 sprites, blinks = profile.assets(root)
-                self.widget.set_sprites(sprites, blinks, profile.mouth_frames(root))
+                self.widget.set_sprites(sprites, blinks, profile.mouth_frames(root), profile.portrait_frame)
                 self.assertEqual(self.widget.width(), int(235 * scale))
                 self.assertEqual(self.widget.height(), int(245 * scale))
-                bounds = self.widget.opaque_region().boundingRect()
-                self.assertLessEqual(abs(bounds.center().x() - self.widget.width() / 2), 2)
-                self.assertLessEqual(abs(bounds.bottom() - (self.widget.height() - 5)), 2)
+                for state in ("idle", "talking", "thinking"):
+                    self.widget.set_state(state)
+                    region = self.widget.opaque_region()
+                    bounds = region.boundingRect()
+                    # Hair or a hand can widen the silhouette on one side. The face
+                    # should still be clickable at Frieren's central eye line.
+                    self.assertTrue(region.contains(QPoint(self.widget.width() // 2,
+                                                           round(self.widget.height() * .25))))
+                    self.assertLessEqual(abs(bounds.bottom() - (self.widget.height() - 5)), 2)
 
     def test_interrupted_transition_and_resize_release_old_buffers(self):
         self.widget.set_state("thinking")

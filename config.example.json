@@ -52,7 +52,7 @@
     "history_enabled": false,
     "output_enabled": false,
     "needs_enabled": false,
-    "motion_mode": "natural",
+    "motion_mode": "reduced",
     "minimized": false,
     "scale": 1.0,
     "opacity": 1.0,

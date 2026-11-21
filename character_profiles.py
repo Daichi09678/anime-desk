@@ -37,6 +37,18 @@ class CharacterProfile:
     def voice_preview(self):
         return self.voice_taps[0]
 
+    def portrait_frame(self, pose):
+        """Portrait window (x, y, width, height) on the 384×448 production sheets.
+
+        Match Frieren's eye line (~23% from the top), not the outer edges of
+        dresses, hair or raised hands. Facial animation uses the same window.
+        """
+        if self.id == "beatrice":
+            return (120, 105, 136, 146) if pose == "idle" else (107, 106, 174, 184)
+        if self.id == "waguri_kaoruko":
+            return (28, 108, 310, 324)
+        return None
+
     @property
     def voice_taps(self):
         """Japanese counterparts of taps, in matching order."""

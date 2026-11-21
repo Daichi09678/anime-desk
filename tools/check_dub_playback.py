@@ -2,6 +2,7 @@
 
 Run with .venv313 Python. Uses temporary preferences and real local voice samples.
 """
+import argparse
 from pathlib import Path
 import logging
 import os
@@ -23,7 +24,11 @@ from main import FrierenDeskWindow
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    identifier = sys.argv[1] if len(sys.argv) > 1 else "frieren"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("character", choices=PROFILES, nargs="?", default="frieren")
+    parser.add_argument("--engine", choices=("qwen-local", "fast"), default="qwen-local")
+    args = parser.parse_args()
+    identifier = args.character
     app = QApplication([])
     app.setQuitOnLastWindowClosed(False)
     assets, available, mouths = CharacterProfile.assets, CharacterProfile.available, CharacterProfile.mouth_frames
@@ -39,7 +44,7 @@ def main():
         window.config.setdefault("ui", {})["voice_enabled"] = False
         window._set_character(identifier)
         window.base_dir = ROOT  # Real synthesis runtime/sample/cache, temporary UI preferences.
-        window.config["ui"].update(voice_enabled=True, voice_mode="narration", tts_engine="qwen-local")
+        window.config["ui"].update(voice_enabled=True, voice_mode="narration", tts_engine=args.engine)
         window.show()
         outcomes = []
         synced = []
@@ -52,7 +57,7 @@ def main():
                             else "Hasil enam kali tujuh adalah empat puluh dua. Kita bisa lanjut ke langkah berikutnya.")
                 if window.bubble._full_text == expected and not window.bubble.typing_timer.isActive():
                     synced.append(phase[0])
-                # Local CPU playback must be one complete clip per utterance,
+                # Playback must be one complete clip per utterance,
                 # not separate clips with synthesis pauses between them.
                 outcomes.append(phase[0])
                 print("PLAYBACK_STARTED", identifier, phase[0], flush=True)
