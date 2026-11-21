@@ -29,9 +29,8 @@ Riwayat pengembangan proyek asal dipertahankan di Git.
   jawaban yang sama dengan persona karakter aktif.
 - **Voice → Narasi → Cloning lokal Qwen3** menggunakan sample karakter di
   `assets/voices/`. Klik karakter juga memicu sapaan Jepang dengan subtitle Indonesia.
-- Persiapan dub lokal CPU menampilkan penghitung waktu; pada mesin pengujian,
-  kalimat pendek membutuhkan sekitar 24–33 detik dan hingga sekitar 5,2 GiB RAM.
-  Audio yang sama dapat digunakan kembali dari cache. **Stop Suara** membatalkan
+- Persiapan dub lokal CPU menampilkan penghitung waktu. Audio yang sama dapat
+  digunakan kembali dari cache. **Stop Suara** membatalkan
   proses; klik berulang selama persiapan tidak memulai ulang model.
 - Edge/Windows adalah pilihan suara sintetis terpisah, bukan cloning sample.
 - Ketiga karakter memakai area tampilan dan baseline seragam, tanpa goyangan
@@ -41,14 +40,24 @@ Cloning lokal memakai environment Python 3.13 terpisah (contoh PowerShell):
 
 ```powershell
 py -3.13 -m venv .venv-voice
-.\.venv-voice\Scripts\python.exe -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+.\.venv-voice\Scripts\python.exe -m pip install torch==2.9.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu
 .\.venv-voice\Scripts\python.exe -m pip install -r requirements-voice.txt
 .\.venv-voice\Scripts\python.exe tools/setup_local_voice.py
 ```
 
-Model diunduh sekali ke `data/models/`; GUI tidak mengunduh model saat chat.
+Model (~2,5 GB) diunduh sekali ke `data/models/`; GUI tidak mengunduh model saat chat.
 Pilih potongan referensi 3–15 detik melalui dialog Voice. Kualitas cloning
 bergantung pada sample; rentang draft perlu didengarkan terlebih dahulu.
+Untuk menyiapkan sapaan klik dari ketiga karakter sekali saja, jalankan:
+
+```powershell
+.\.venv313\Scripts\python.exe tools/setup_voice_greetings.py
+```
+
+Sapaan tersebut bisa langsung diputar dalam mode **Cloning lokal** atau
+**Cepat & Ringan**, tanpa memuat Qwen. Ulangi persiapan jika mengganti referensi
+suara karakter.
+
 Model, cache suara, konfigurasi pribadi, dan riwayat percakapan tidak disimpan
 dalam repository. Lihat [HANDOFF_PROMPT.md](HANDOFF_PROMPT.md) untuk progres terbaru.
 
@@ -115,63 +124,42 @@ Untuk tes GUI tanpa desktop, jalankan dengan environment `QT_QPA_PLATFORM=offscr
 
 ## 📋 Persyaratan Sistem (Prerequisites)
 
-### Rekomendasi spesifikasi untuk chat dan cloning suara lokal
+### Rekomendasi spesifikasi
 
-**Prioritas upgrade untuk mempercepat cloning Qwen adalah GPU NVIDIA dengan
-dukungan CUDA.** RAM 32 GB dan CPU kelas Ryzen 5 5600 masih layak dipertahankan
-untuk aplikasi desktop dan chat melalui Codex/Antigravity.
+**PC acuan:** Windows 11 64-bit, Ryzen 5 5600 (6 inti/12 thread), Radeon RX 6600 XT,
+dan RAM 32 GB. Konfigurasi ini bisa menjalankan Anime Desk, termasuk cloning suara
+Qwen3 di CPU, tanpa perlu upgrade GPU.
 
-| Komponen | Upgrade paling masuk akal | Sangat direkomendasikan untuk rakitan baru |
-|---|---|---|
-| GPU | NVIDIA RTX 4060 Ti **16 GB** atau RTX 5060 Ti **16 GB** | NVIDIA RTX 5070 Ti **16 GB** atau RTX 5080 **16 GB** |
-| CPU | AMD Ryzen 5 5600 atau setara | AMD Ryzen 9 9900X / 9950X |
-| RAM | **32 GB** untuk aplikasi dan Qwen TTS lokal | **64 GB** jika juga menjalankan model chat lokal; kebutuhan bergantung pada ukuran model |
-| Penyimpanan | SSD NVMe dengan ruang kosong untuk model dan cache | SSD NVMe PCIe 4.0, kapasitas **1–2 TB** |
-| PSU | Sesuai kebutuhan GPU dan komponen lainnya | PSU berkualitas sesuai rekomendasi produsen GPU |
+| Penggunaan | Rekomendasi praktis |
+|---|---|
+| Desktop companion, chat Codex/Antigravity, dan suara sintetis | CPU desktop biasa, grafis terintegrasi atau diskret, dan RAM 8 GB sebagai perkiraan awal. |
+| Cloning suara lokal Qwen3-TTS 0.6B | CPU kelas Ryzen 5 5600 atau setara. RAM 16 GB bisa dicoba bila beban aplikasi lain ringan; 32 GB adalah konfigurasi yang telah diuji. Siapkan sekitar 10 GB ruang kosong untuk dependensi, model, dan cache audio. |
 
-Spesifikasi di atas adalah **rekomendasi upgrade, bukan persyaratan minimum atau
-hasil benchmark GPU proyek ini**. VRAM 16 GB memberi ruang untuk pengembangan;
-bukan berarti model Qwen TTS 0.6B selalu membutuhkan seluruh kapasitas tersebut.
-Periksa juga ukuran GPU, konektor daya, dan kapasitas PSU sebelum upgrade.
+Angka tersebut adalah panduan pemakaian, bukan spesifikasi minimum hasil benchmark.
+Qwen3 saat ini memakai **PyTorch CPU**; Radeon RX 6600 XT menangani tampilan,
+bukan inferensi suara. Pada PC acuan, satu uji yang mencakup pemuatan model
+menghasilkan audio Jepang berdurasi 6,6 detik dalam sekitar 35 detik, dengan
+puncak RAM proses sekitar 5,4 GiB. Waktu dapat berbeda tergantung panjang teks
+dan cache.
 
-#### Status akselerasi GPU pada aplikasi
+Setelan bawaan memakai **Gerakan Karakter → Hemat (10 FPS)** dan 3 thread CPU
+untuk inferensi Qwen. Model dimuat saat perlu membuat audio baru, lalu dilepas
+dari RAM setelah 60 detik tidak digunakan. Dub pertama setelah idle perlu memuat
+model lagi; audio dari cache bisa langsung diputar tanpa memuat model.
 
-- Implementasi cloning saat ini memakai **CPU** (`device_map="cpu"` di
-  `local_voice_process.py`), dan panduan instalasi di README ini memasang PyTorch CPU.
-- Memasang GPU NVIDIA saja **belum mengaktifkan akselerasi**. Pemakaian GPU
-  memerlukan PyTorch dengan CUDA yang sesuai GPU/driver, perubahan pemuatan model
-  ke CUDA, serta pengujian kompatibilitas dan kualitas audio.
-- Contoh PC yang diuji: **Ryzen 5 5600, Radeon RX 6600 XT, RAM 32 GB**.
-  Pada konfigurasi aplikasi saat ini, cloning berjalan di CPU; Radeon tersebut
-  belum dipakai untuk inferensi suara. CUDA merupakan teknologi NVIDIA.
-- CPU-only tetap dapat digunakan, tetapi pembuatan narasi baru dapat memerlukan
-  puluhan detik, bergantung pada panjang teks. GPU yang direkomendasikan belum
-  dibenchmark untuk proyek ini, sehingga belum ada jaminan respons di bawah satu detik.
-
-#### Apa yang memengaruhi kecepatan respons?
-
-1. **Jawaban AI melalui Codex/Antigravity:** dipengaruhi model yang dipilih,
-   tingkat reasoning, jaringan, dan antrean server. Untuk percakapan ringan,
-   gunakan model cepat dengan reasoning rendah. Upgrade GPU lokal tidak langsung
-   mempercepat inferensi AI yang berjalan di server.
-2. **Cloning suara lokal:** dipengaruhi perangkat inferensi, model, panjang
-   narasi, dan cache. GPU NVIDIA menjadi prioritas setelah jalur CUDA diaktifkan.
-3. **Suara mengalir tanpa jeda:** targetnya adalah pembuatan audio lebih cepat
-   daripada durasi audio tersebut. Streaming juga memerlukan pengaturan buffer
-   dan sinkronisasi teks–suara; peningkatan hardware saja tidak cukup.
-
-**Saran upgrade bertahap:** pertahankan Ryzen 5 5600 dan RAM 32 GB, prioritaskan
-GPU NVIDIA 16 GB, lalu aktifkan dan uji jalur CUDA. Untuk anggaran lebih besar,
-RTX 5070 Ti 16 GB memberi ruang komputasi lebih luas tanpa harus langsung
-mengganti seluruh PC.
+Jika ingin balasan suara lebih cepat dan ringan, pilih **Voice → Mesin narasi →
+Cepat & Ringan**. Mode ini memutar sapaan cloning yang sudah disiapkan dan memakai
+suara sintetis Edge untuk balasan baru. Edge menerima teks Jepang untuk membuat
+audio online; sample suara karakter tetap lokal. Chat Codex/Antigravity memakai
+layanan online; kecepatan respons dipengaruhi model, jaringan, dan antrean server.
 
 ### Software yang diperlukan
 
 Sebelum menjalankan Frieren Desk Companion, pastikan hal-hal berikut sudah terpasang di komputermu:
 
-### 1. Python 3.11 atau Lebih Baru
-- **Windows**: Download dari [python.org](https://www.python.org/downloads/).  
-  *(⚠️ **PENTING**: Saat menginstall di Windows, pastikan kamu mencentang opsi **"Add python.exe to PATH"**).*
+### 1. Python
+- **Windows**: Gunakan [Python 3.13 64-bit](https://www.python.org/downloads/),
+  versi yang diuji untuk GUI dan dependensi Qwen lokal.
 - **macOS**: Pasang via Homebrew: `brew install python@3.12`
 
 ### 2. Salah Satu (atau Kedua) AI Engine CLI:
@@ -198,19 +186,20 @@ Pilih engine yang ingin kamu gunakan:
 
 ### Cara Cepat (Windows) 🪟
 
-1. Buka folder repositori `frieren-desk`.
+1. Buka folder repositori `anime-desk`.
 2. Klik dua kali (double click) file **`run_windows.bat`**.
-    - Script akan otomatis mengecek Python, membuat `.venv`, menginstall semua dependencies, dan menjalankan Frieren di background tanpa jendela hitam terminal CMD!
+    - Script akan mengecek Python, memasang dependensi GUI bila dibutuhkan, dan menjalankan Anime Desk di background. Untuk cloning suara, siapkan `.venv-voice` secara terpisah seperti di atas.
     - Bila `.venv313` tersedia dengan dependencies yang valid, launcher memakai
       environment tersebut terlebih dahulu. Pemeriksaan mencakup modul native
       Pillow dan Qt, beserta `edge-tts` dan `mutagen`.
     - Untuk langsung membuka panel chat: `run_windows.bat --panel`.
 
-Environment rumah yang telah diuji menggunakan Python 3.13 di `.venv313`:
+Untuk menyiapkan environment GUI dengan Python 3.13 secara eksplisit:
 
 ```powershell
+py -3.13 -m venv .venv313
 .\.venv313\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv313\Scripts\pythonw.exe main.py --panel
+.\run_windows.bat --panel
 ```
 
 ---
@@ -226,7 +215,7 @@ Environment rumah yang telah diuji menggunakan Python 3.13 di `.venv313`:
 2. **Buat dan aktifkan Virtual Environment:**
    - **Windows (PowerShell):**
      ```powershell
-     python -m venv .venv
+     py -3.13 -m venv .venv
      .\.venv\Scripts\Activate.ps1
      ```
    - **macOS / Linux:**
